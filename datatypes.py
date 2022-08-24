@@ -19,11 +19,13 @@ class Person:
     def similar(self, other: Person, similarity_threshold: float = 0.9) -> bool:
         # Consider permutations of name order, last name before first name etc.
         name_similarity = 0
-        for name in (' '.join(names) for names in permutations(other.name.split(' '))):
-            if (ratio := SequenceMatcher(_seq_ignore_space, self.name, name).ratio()) > name_similarity:
-                name_similarity = ratio
-                if name_similarity > similarity_threshold:
-                    return True
+        sub_names = other.name.split(' ')
+        for n in range(len(sub_names), 1, -1):
+            for name in (' '.join(names) for names in (permutations(sub_names, n))):
+                if (ratio := SequenceMatcher(_seq_ignore_space, self.name, name).ratio()) > name_similarity:
+                    name_similarity = ratio
+                    if name_similarity > similarity_threshold:
+                        return True
 
         email_similarity = SequenceMatcher(_seq_ignore_space, self.email, other.email).ratio()
         return name_similarity > similarity_threshold or email_similarity > similarity_threshold
@@ -35,13 +37,33 @@ class Registration(Person):
     timeslots: [str]
     read_rules: bool
 
+    @property
+    def person(self):
+        return Person(self.name, self.email)
 
-@dataclass(frozen=False)
+
+@dataclass(frozen=True)
 class RegistrationExtras:
     student_type: str
     erasmus: bool
     nationality: str
     sit_residency: str
+
+@dataclass(frozen=True)
+class FullRegistration(RegistrationExtras, Registration):
+
+    @property
+    def person(self):
+        return Person(self.name, self.email)
+
+    @property
+    def registration(self):
+        return Registration(self.name, self.email, self.timestamp, self.timeslots, self.read_rules)
+
+    @property
+    def extras(self):
+        return RegistrationExtras(self.student_type, self.erasmus, self.nationality, self.sit_residency)
+
 
 
 class AdmittanceStatus(IntFlag):
@@ -71,6 +93,17 @@ class Timeslot:
         content = ', '.join(f"{k}: {str(v)}" for k, v in self.__dict__.items())
         return f"Timeslot({content})"
 
+    def add(self, person: Person) -> bool:
+        if (index := len(self.spots)) < self.capacity:
+            for already_admitted in self.spots:
+                if person.similar(already_admitted):
+                    print("THIS SHOULD NEVER HAPPEN WHEN WE PREPROCESS REGISTRATIONS!")
+                    # TODO: Handle marked individuals
+            self.spots.append(person)
+            return True
+        return False
+
+
     def admit(self, person: Person) -> Tuple[AdmittanceStatus, int]:
         if (index := len(self.spots)) < self.capacity:
             marked = False
@@ -89,3 +122,20 @@ class Timeslot:
 
         self.waiting_list.append(person)
         return AdmittanceStatus.Waiting_List, len(self.waiting_list)
+
+
+if __name__ == '__main__':
+    a = Person("Halvor Bakken Smedås", "halvor@restore-trd.no")
+    others = [
+        Person("Halvor Bakken Smedås", "halvor@restore-trd.no"),
+        Person("Klara Schlüter", "halvor@restore-trd.no"),
+        Person("Bakken Smedås", "halvor@restore-trd.no"),
+        Person("Halvor Smedås", "halvor@restore-trd.no"),
+        Person("Halvor Smedås", "halvor@restore-trd.n"),
+    ]
+
+    for b in others:
+        if not a == b:
+            print("Not the same:", a, b)
+        if not a.similar(b):
+            print("Not similar:", a, b)
