@@ -3,3 +3,4 @@ __pycache__
 
 # data files may contain sensitive information
 data/*.*
+output/*.*
