@@ -21,7 +21,7 @@ def open_csv_path_if_not_exist(path: str, title: str) -> str:
 if __name__ == '__main__':
 
     # file_path = "C:/Users/halvo/Downloads/RESTORE-Second opening (Responses) - Form responses 1.csv"
-    registrations_path = open_csv_path_if_not_exist("data/all_signups.csv", "Registrations")
+    registrations_path = open_csv_path_if_not_exist("data/third_opening_test.csv", "Registrations")
     ban_list_path = open_csv_path_if_not_exist("data/Redlist - Sheet1.csv", "Ban list")
     first_slot_disallowed_list_path = open_csv_path_if_not_exist("data/timeslot1.csv", "First slot disallowed list")
 

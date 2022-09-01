@@ -239,7 +239,7 @@ class OpeningAdmittance:
                 person.email,
                 remark
             ])
-        workbook.save(destination + "/output.xlsx")
+        workbook.save(destination + f"/output_{datetime.now().strftime('%Y%m%d__%H_%M_%S')}.xlsx")
 
     def write_to_csv(self):
         os.makedirs("./output/", exist_ok=True)
