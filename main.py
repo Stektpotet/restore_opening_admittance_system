@@ -21,9 +21,9 @@ def open_csv_path_if_not_exist(path: str, title: str) -> str:
 if __name__ == '__main__':
 
     # file_path = "C:/Users/halvo/Downloads/RESTORE-Second opening (Responses) - Form responses 1.csv"
-    registrations_path = open_csv_path_if_not_exist("data/third_opening_test.csv", "Registrations")
-    ban_list_path = open_csv_path_if_not_exist("data/Redlist - Sheet1.csv", "Ban list")
-    first_slot_disallowed_list_path = open_csv_path_if_not_exist("data/timeslot1.csv", "First slot disallowed list")
+    registrations_path = open_csv_path_if_not_exist("data/third_opening.csv", "Registrations")
+    ban_list_path = open_csv_path_if_not_exist("data/banlist.csv", "Ban list")
+    first_slot_disallowed_list_path = open_csv_path_if_not_exist("data/restricted_from_first_timeslot.csv", "First slot disallowed list")
 
     registrations = [r.registration for r in read_registrations(registrations_path)]
     registrations.sort(key=lambda reg: reg.timestamp)
@@ -34,8 +34,6 @@ if __name__ == '__main__':
     admittance = OpeningAdmittance({
         "10:00-11:00": LimitedTimeslot(50),
         "11:00-12:00": LimitedTimeslot(60),
-        "12:00-13:00": LimitedTimeslot(70),
-        "13:00-14:00": LimitedTimeslot(80),
     })
 
     admittance.timeslots["10:00-11:00"].disallowed = disallowed_list

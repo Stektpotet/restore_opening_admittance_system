@@ -1,8 +1,7 @@
 import csv
 import os
-import warnings
-from multiprocessing.pool import Pool
-from typing import List, Dict, Iterable, Optional, Set, Union
+from collections import defaultdict
+from typing import List, Dict, Iterable, Optional, Set, Union, DefaultDict
 
 import openpyxl as xl
 
@@ -27,10 +26,15 @@ def read_registrations(file_path: str) -> List[Registration]:
         ]
 
 
-def read_people_table(file_path: str, name_column: int, email_column: int) -> List[Person]:
-    with open(file_path, encoding="utf-8") as person_table_file:
-        next(table_reader := csv.reader(person_table_file))  # skip headers and assign to table_reader
-        return [Person(_normalise(row[name_column]), _normalise(row[email_column])) for row in table_reader]
+def read_people_table(file_path: str, name_column: int, email_column: int, allow_failure: bool = True) -> List[Person]:
+    try:
+        with open(file_path, encoding="utf-8") as person_table_file:
+            next(table_reader := csv.reader(person_table_file))  # skip headers and assign to table_reader
+            return [Person(_normalise(row[name_column]), _normalise(row[email_column])) for row in table_reader]
+    except FileNotFoundError as file_not_found_error:
+        if allow_failure:
+            return []
+        raise file_not_found_error
 
 
 class Timeslot:
@@ -92,14 +96,14 @@ class OpeningAdmittance:
     processed: Dict[Person, Registration]
     cancelled: Set[Person]
     banned: Set[Person]
-    marked: Dict[Person, str]
+    marked: DefaultDict[Person, List[str]]
 
     def __init__(self, timeslots: Optional[Dict[str, Timeslot]] = None):
         self.timeslots = timeslots if timeslots else {}
         self.waiting_list = []
         self.cancelled = set()
         self.banned = set()
-        self.marked = {}
+        self.marked = defaultdict(list)
 
     def clear(self):
         for timeslot in self.timeslots.values():
@@ -118,26 +122,34 @@ class OpeningAdmittance:
         :return: registrations without duplicate entries (NOTE: suspected duplicates are only marked for manual check
                  and will remain as separate registrations)
         """
+        bad_email_endings = [".con", "@ntnu.no"]
+
         proccessed_for_admission = {}
         for registration in registrations:
             if registration.person in self.banned:
-                self.marked[registration.person] = "Banned from attending, see ban list!"
+                self.marked[registration.person].append("Banned from attending, see ban list!")
                 continue
 
+            for ending in bad_email_endings:
+                if registration.person.email.endswith(ending):
+                    self.marked[registration.person].append(f"Likely a non-working email! It ends with '{ending}'.")
+
             if all(registration.person in timeslot.disallowed for timeslot in self.timeslots.values()):
-                self.marked[registration.person] = "Banned from attending the timeslots they signed up for, " \
-                                                   "attended previous opening in the early slot(s)!"
+                self.marked[registration.person].append(
+                    "Down prioritised from attending the timeslot(s) they signed up for, "
+                    "attended previous opening in the early slot(s)!"
+                )
                 continue
 
             # Check if already given a spot
             if (person := registration.person) in proccessed_for_admission.keys():
-                # TODO: only overwrite entry if change in timeslots
+                # only overwrite entry if change in timeslots
                 if set(registration.timeslots) != set(proccessed_for_admission[person].timeslots):
                     # NOTE: changing your timeslots has its drawback - you're now later in the queue
                     reason = f"Duplicate Entry for {person}:\noverwriting {proccessed_for_admission[person]}...\n"\
                              f"timestamp changed from {proccessed_for_admission[person].timestamp} to {registration.timestamp}\n"\
                              f"changed timeslots from {proccessed_for_admission[person].timeslots} to {registration.timeslots}"
-                    self.marked[person] = reason
+                    self.marked[person].append(reason)
                 else:
                     # if no substantial change is made, don't reprocess the person. They did as intended the first
                     # time around and should not be punished for trying to make sure they registered.
@@ -145,8 +157,8 @@ class OpeningAdmittance:
             else:
                 for already_processed_person, already_processed_registration in proccessed_for_admission.items():
                     if registration.person.similar(already_processed_person):
-                        self.marked[already_processed_person] = f"Suspected duplicate of {registration}"
-                        self.marked[registration.person] = f"Suspected duplicate of {already_processed_registration}"
+                        self.marked[already_processed_person].append(f"Suspected duplicate of {registration}")
+                        self.marked[registration.person].append(f"Suspected duplicate of {already_processed_registration}")
                         break
             proccessed_for_admission[person] = registration
         return proccessed_for_admission
@@ -154,7 +166,7 @@ class OpeningAdmittance:
     def auto_admit(self, registrations: Iterable[Registration]):
         self.processed = self._preprocess_and_mark(registrations)
         for registration in self.processed.values():
-            if not any(self.timeslots[wanted_slot].admit(registration) for wanted_slot in registration.timeslots):
+            if not any(self.timeslots[wanted_slot].admit(registration) for wanted_slot in registration.timeslots if wanted_slot in self.timeslots):
                 self.waiting_list.append(registration)
 
     # def cancel(self, cancelled: Union[Iterable[Person], Person]):
@@ -203,7 +215,7 @@ class OpeningAdmittance:
                     registration.person.name,
                     registration.person.email,
                     ", ".join(registration.timeslots),
-                    self.marked.get(registration.person, "")
+                    '\n'.join(self.marked.get(registration.person, []))
                 ])
 
         waiting_list_sheet = workbook.create_sheet("Waiting List", len(self.timeslots))
@@ -213,7 +225,7 @@ class OpeningAdmittance:
                 registration.person.name,
                 registration.person.email,
                 ", ".join(registration.timeslots),
-                self.marked.get(registration.person, "")
+                '\n'.join(self.marked.get(registration.person, []))
             ])
         cancelled_list_sheet = workbook.create_sheet("Cancelled", len(self.timeslots) + 1)
         cancelled_list_sheet.append(["Name", "Email", "Remarks"])
@@ -221,7 +233,7 @@ class OpeningAdmittance:
             cancelled_list_sheet.append([
                 person.name,
                 person.email,
-                self.marked.get(person, "")
+                '\n'.join(self.marked.get(person, []))
             ])
         banned_list_sheet = workbook.create_sheet("Banned", len(self.timeslots) + 2)
         banned_list_sheet.append(["Name", "Email", "Remarks"])
@@ -229,16 +241,17 @@ class OpeningAdmittance:
             banned_list_sheet.append([
                 person.name,
                 person.email,
-                self.marked.get(person, "")
+                '\n'.join(self.marked.get(person, []))
             ])
         marked_list_sheet = workbook.create_sheet("All Remarks", len(self.timeslots) + 3)
         marked_list_sheet.append(["Name", "Email", "Remarks"])
-        for j, (person, remark) in enumerate(self.marked.items()):
+        for j, (person, remarks) in enumerate(self.marked.items()):
             marked_list_sheet.append([
                 person.name,
                 person.email,
-                remark
+                '\n'.join(remarks)
             ])
+        workbook.remove(workbook["Sheet"])
         workbook.save(destination + f"/output_{datetime.now().strftime('%Y%m%d__%H_%M_%S')}.xlsx")
 
     def write_to_csv(self):
