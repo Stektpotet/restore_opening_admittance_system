@@ -45,15 +45,18 @@ class Person:
         return False
 
 
-@dataclass(frozen=True, eq=True)
+@dataclass(frozen=True)
 class Registration(Person):
     timestamp: datetime.datetime = field(compare=False)
     timeslots: [str] = field(compare=False)
-    read_rules: bool = field(compare=False)
+    # read_rules: bool = field(compare=False)
+
+    def __eq__(self, other: Registration):
+        return self.person.__eq__(other.person)
 
     @property
     def registration(self):
-        return Registration(self.name, self.email, self.timestamp, self.timeslots, self.read_rules)
+        return Registration(self.name, self.email, self.timestamp, self.timeslots)
 
 
 @dataclass(frozen=True, eq=True)
@@ -73,11 +76,6 @@ class FullRegistration(RegistrationExtras, Registration):
 
     def __eq__(self, other: FullRegistration):
         return self.person.__eq__(other.person)
-
-
-@dataclass(frozen=True)
-class Cancellation(Person):
-    reason: str
 
 
 if __name__ == '__main__':
