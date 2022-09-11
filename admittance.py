@@ -97,6 +97,7 @@ class OpeningAdmittance:
     cancelled: Set[Person]
     banned: Set[Person]
     marked: DefaultDict[Person, List[str]]
+    confirmed_duplicates: Set[Person]
 
     def __init__(self, timeslots: Optional[Dict[str, Timeslot]] = None):
         self.timeslots = timeslots if timeslots else {}
@@ -104,6 +105,7 @@ class OpeningAdmittance:
         self.cancelled = set()
         self.banned = set()
         self.marked = defaultdict(list)
+        self.confirmed_duplicates = set()
 
     def clear(self):
         for timeslot in self.timeslots.values():
@@ -126,28 +128,80 @@ class OpeningAdmittance:
 
         proccessed_for_admission = {}
         for registration in registrations:
+
+            # Evaluate if peron is banned
             if registration.person in self.banned:
                 self.marked[registration.person].append("Banned from attending, see ban list!")
                 continue
+            else:
+                confirmed_duplicate = False
+                for banned_person in self.banned:
+                    if banned_person.similar(registration.person):
+                        if confirmed_duplicate := registration.person in self.confirmed_duplicates:
+                            self.marked[registration.person].append(f"Confirmed ban, see ban list for {banned_person}!")
+                            self.banned.add(registration.person)
+                            break
+                        else:
+                            self.marked[registration.person].append(f"Suspected ban: {registration.person} might be!, "
+                                                                    f"{banned_person} from banlist!")
+                            break
+                if confirmed_duplicate:
+                    continue  # skip this person, go on to the next!
+
+            # Evaluate if person has a bad email ending
 
             for ending in bad_email_endings:
                 if registration.person.email.endswith(ending):
                     self.marked[registration.person].append(f"Likely a non-working email! It ends with '{ending}'.")
+
+            # Evaluate if person has not been given a timeslot because of attending previous "premium" timeslots in
+            # earlier opening
 
             if all(registration.person in timeslot.disallowed for timeslot in self.timeslots.values()):
                 self.marked[registration.person].append(
                     "Down prioritised from attending the timeslot(s) they signed up for, "
                     "attended previous opening in the early slot(s)!"
                 )
-                continue
+                continue  # go on to the next person!
 
-            # Check if already given a spot
+            for timeslot_name, timeslot in self.timeslots.items():
+                if timeslot_name not in registration.timeslots:  # we only care if they signed this timeslot
+                    continue
+                if registration.person in timeslot.disallowed:
+                    self.marked[registration.person].append(
+                        f"Down prioritised from attending {timeslot_name} because they "
+                        f"attended previous opening in the early slot(s)!"
+                    )
+                    break
+                else:
+                    # confirmed_duplicate = False
+                    for downprioritised_person in timeslot.disallowed:
+                        if downprioritised_person.similar(registration.person):
+                            if confirmed_duplicate := registration.person in self.confirmed_duplicates:
+                                self.marked[registration.person].append(
+                                    f"Down prioritised from attending {timeslot_name} because they "
+                                    "attended previous opening in the early slot(s)!. confirmed suspected duplicate"
+                                    f" of: {downprioritised_person} from downprioritised list!"
+                                )
+                                timeslot.disallowed.add(registration.person)
+                                break
+                            else:
+                                self.marked[registration.person].append(
+                                    f"Subject to being down prioritised from {timeslot_name}, "
+                                    f"suspecting {registration.person} might be the"
+                                    f"same as {downprioritised_person} from the down prioritised list!"
+                                )
+                                break
+                    # if confirmed_duplicate:
+                    #     continue  # skip this person, go on to the next!
+
+            # Evaluate if person is already in the system
             if (person := registration.person) in proccessed_for_admission.keys():
                 # only overwrite entry if change in timeslots
                 if set(registration.timeslots) != set(proccessed_for_admission[person].timeslots):
                     # NOTE: changing your timeslots has its drawback - you're now later in the queue
-                    reason = f"Duplicate Entry for {person}:\noverwriting {proccessed_for_admission[person]}...\n"\
-                             f"timestamp changed from {proccessed_for_admission[person].timestamp} to {registration.timestamp}\n"\
+                    reason = f"Duplicate Entry for {person}:\noverwriting {proccessed_for_admission[person]}...\n" \
+                             f"timestamp changed from {proccessed_for_admission[person].timestamp} to {registration.timestamp}\n" \
                              f"changed timeslots from {proccessed_for_admission[person].timeslots} to {registration.timeslots}"
                     self.marked[person].append(reason)
                 else:
@@ -155,18 +209,29 @@ class OpeningAdmittance:
                     # time around and should not be punished for trying to make sure they registered.
                     continue
             else:
-                for already_processed_person, already_processed_registration in proccessed_for_admission.items():
+                for already_processed_person, already_processed_registration in proccessed_for_admission.copy().items():
                     if registration.person.similar(already_processed_person):
-                        self.marked[already_processed_person].append(f"Suspected duplicate of {registration}")
-                        self.marked[registration.person].append(f"Suspected duplicate of {already_processed_registration}")
-                        break
+                        if confirmed_duplicate := registration.person in self.confirmed_duplicates:
+                            # only overwrite entry if change in timeslots
+                            self.marked[already_processed_person].append(
+                                f"Confirmed suspected duplicate! {registration.person} is the same as {already_processed_person}!"
+                                f"\nOverwriting {already_processed_registration} with {registration}...\n"
+                            )
+                            del proccessed_for_admission[already_processed_person]
+                        else:
+                            self.marked[already_processed_person].append(f"Suspected duplicate of {registration}")
+                            self.marked[registration.person].append(
+                                f"Suspected duplicate of {already_processed_registration}")
+                            break
+
             proccessed_for_admission[person] = registration
         return proccessed_for_admission
 
     def auto_admit(self, registrations: Iterable[Registration]):
         self.processed = self._preprocess_and_mark(registrations)
         for registration in self.processed.values():
-            if not any(self.timeslots[wanted_slot].admit(registration) for wanted_slot in registration.timeslots if wanted_slot in self.timeslots):
+            if not any(self.timeslots[wanted_slot].admit(registration) for wanted_slot in registration.timeslots if
+                       wanted_slot in self.timeslots):
                 self.waiting_list.append(registration)
 
     # def cancel(self, cancelled: Union[Iterable[Person], Person]):
@@ -209,9 +274,10 @@ class OpeningAdmittance:
         for i, (timeslot_name, timeslot) in enumerate(self.timeslots.items()):
             timeslot_name = timeslot_name.replace(':', '_')
             sheet = workbook.create_sheet(timeslot_name, i)
-            sheet.append(["Name", "Email", "Wanted Timeslots", "Remarks"])
+            sheet.append(["Timestamp", "Name", "Email", "Wanted Timeslots", "Remarks"])
             for j, registration in enumerate(self.processed[person] for person in timeslot.spots):
                 sheet.append([
+                    registration.timestamp,
                     registration.person.name,
                     registration.person.email,
                     ", ".join(registration.timeslots),
@@ -219,9 +285,10 @@ class OpeningAdmittance:
                 ])
 
         waiting_list_sheet = workbook.create_sheet("Waiting List", len(self.timeslots))
-        waiting_list_sheet.append(["Name", "Email", "Wanted Timeslots", "Remarks"])
+        waiting_list_sheet.append(["Timestamp", "Name", "Email", "Wanted Timeslots", "Remarks"])
         for j, registration in enumerate(self.waiting_list):
             waiting_list_sheet.append([
+                registration.timestamp,
                 registration.person.name,
                 registration.person.email,
                 ", ".join(registration.timeslots),

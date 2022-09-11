@@ -18,29 +18,40 @@ def open_csv_path_if_not_exist(path: str, title: str) -> str:
     return path
 
 
+
+
 if __name__ == '__main__':
 
+    # TODO: Are you also in waiting list if you're admitted in the second time slot?
+
     # file_path = "C:/Users/halvo/Downloads/RESTORE-Second opening (Responses) - Form responses 1.csv"
-    registrations_path = open_csv_path_if_not_exist("data/third_opening.csv", "Registrations")
+    registrations_path = open_csv_path_if_not_exist("data/third_opening_registrations.csv", "Registrations")
     ban_list_path = open_csv_path_if_not_exist("data/banlist.csv", "Ban list")
-    first_slot_disallowed_list_path = open_csv_path_if_not_exist("data/restricted_from_first_timeslot.csv", "First slot disallowed list")
+    first_slot_disallowed_list_path = open_csv_path_if_not_exist("data/downprioritized.csv", "First slot disallowed list")
+    confirmed_duplicates_path = open_csv_path_if_not_exist("data/confirmed_duplicates.csv", "Manually confirmed duplicates")
 
     registrations = [r.registration for r in read_registrations(registrations_path)]
     registrations.sort(key=lambda reg: reg.timestamp)
 
     ban_list = read_people_table(ban_list_path, name_column=2, email_column=1)
-    disallowed_list = read_people_table(first_slot_disallowed_list_path, name_column=2, email_column=1)
+    disallowed_set = set(read_people_table(first_slot_disallowed_list_path, name_column=2, email_column=1))
+
+    confirmed_duplicates = read_people_table(confirmed_duplicates_path, name_column=0, email_column=1)
+
 
     admittance = OpeningAdmittance({
         "10:00-11:00": LimitedTimeslot(50),
         "11:00-12:00": LimitedTimeslot(60),
     })
 
-    admittance.timeslots["10:00-11:00"].disallowed = disallowed_list
+    admittance.confirmed_duplicates = set(confirmed_duplicates)
+
+    admittance.timeslots["10:00-11:00"].disallowed = disallowed_set
 
     admittance.banned.update(ban_list)
 
     admittance.auto_admit(registrations)
+
     admittance.write_to_spreadsheets("data/")
     # registrations[0].person()
     #
